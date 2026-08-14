@@ -1,0 +1,80 @@
+name: Deploy Frontend Project
+
+# ==========================================
+# 触发条件
+# 当 main 分支有代码推送时，自动执行部署
+# ==========================================
+on:
+  push:
+    branches:
+      - main
+
+# ==========================================
+# 避免同一项目多个部署任务同时执行
+# 新任务开始时，取消尚未完成的旧任务
+# ==========================================
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ==========================================
+      # 通过 SSH 登录服务器并执行部署脚本
+      # ==========================================
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+
+        with:
+          # GitHub仓库中配置的服务器公网IP
+          host: ${{ secrets.SERVER_HOST }}
+
+          # 【需要替换 1】
+          # 服务器登录用户名
+          # 你当前统一使用 ubuntu，一般不需要修改
+          username: ubuntu
+
+          # GitHub仓库中配置的服务器SSH私钥
+          key: ${{ secrets.SERVER_SSH_KEY }}
+
+          # SSH端口，默认22
+          port: 22
+
+          # 单次部署允许执行的最长时间
+          command_timeout: 20m
+
+          script: |
+            set -e
+
+            echo "================================"
+            echo "开始执行自动部署"
+            echo "项目仓库：${{ github.repository }}"
+            echo "触发分支：${{ github.ref_name }}"
+            echo "触发提交：${{ github.sha }}"
+            echo "================================"
+
+            # 【需要替换 2】
+            # 服务器上的项目源码目录
+            cd /data/projects/arch-stencil
+
+            echo "当前服务器用户：$(whoami)"
+            echo "当前项目目录：$(pwd)"
+
+            # 检查部署脚本是否存在
+            if [ ! -f "./deploy.sh" ]; then
+              echo "错误：当前项目目录下不存在 deploy.sh"
+              exit 1
+            fi
+
+            # 确保脚本有执行权限
+            chmod +x ./deploy.sh
+
+            # 执行服务器端部署脚本
+            ./deploy.sh
+
+            echo "================================"
+            echo "自动部署执行完成"
+            echo "================================"
