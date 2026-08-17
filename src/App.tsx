@@ -110,7 +110,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 function createDocument(templateId: TemplateId, themeId: ThemeId): ArchitectureDocument {
   const template = templates[templateId]
   const parsed = parseArchitectureText(template.exampleSource)
-  return buildDocument(parsed.roots, templateId, themes[themeId], template.exampleSource, parsed.title)
+  return buildDocument(parsed.roots, templateId, themes[themeId], template.exampleSource, parsed.title, template.multiPaletteLayerIndexes)
 }
 
 function isTypingTarget(target: EventTarget | null) {
@@ -278,7 +278,7 @@ function App() {
       notify('请先修正文本格式问题')
       return
     }
-    const next = buildDocument(parsed.roots, activeTemplateId, themes[documentData.themeId], sourceText, parsed.title)
+    const next = buildDocument(parsed.roots, activeTemplateId, themes[documentData.themeId], sourceText, parsed.title, template.multiPaletteLayerIndexes)
     commit(next)
     setSelected(null)
     notify(message)
@@ -374,7 +374,7 @@ function App() {
   }
 
   const changeTheme = (themeId: ThemeId) => {
-    commit(applyTheme(documentData, themes[themeId]))
+    commit(applyTheme(documentData, themes[themeId], template.multiPaletteLayerIndexes))
     notify(`已切换主题：${themes[themeId].name}`)
   }
 

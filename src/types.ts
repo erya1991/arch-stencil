@@ -70,6 +70,7 @@ export interface Card extends Rect {
   id: string
   sourceId: string
   level?: number
+  paletteIndex?: number
   parentLayerId: string
   parentGroupId?: string
   title: string
@@ -110,7 +111,11 @@ export interface TemplateDefinition {
   exampleSource: string
   layoutHint: string
   aiPrompt: string
+  multiPaletteLayerIndexes: number[]
 }
+
+export type CardStylePreset = { background: string; border: string; text: string }
+export type CardPalette = Record<2 | 3 | 4, CardStylePreset>
 
 export interface ThemeDefinition {
   id: ThemeId
@@ -122,7 +127,8 @@ export interface ThemeDefinition {
   layerBackground: string
   layerBorder: string
   layerLabelPalette: string[]
-  levelCardStyles: Record<2 | 3 | 4, { background: string; border: string; text: string }>
+  levelCardStyles: CardPalette
+  cardPalette?: CardPalette[]
   groupPalette: string[]
   cardBackground: string
   cardBorder: string

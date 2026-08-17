@@ -109,6 +109,7 @@ export const templates: Record<TemplateId, TemplateDefinition> = {
     exampleSource: productSource.replace(/XXX平台/g, '建筑产业工人平台').replace(/应用入口/g, '应用端'),
     layoutHint: '左侧层级标签 + 全量小卡片',
     aiPrompt: createAiPrompt('多层产品架构图'),
+    multiPaletteLayerIndexes: [1],
   },
   layered: {
     id: 'layered',
@@ -119,6 +120,7 @@ export const templates: Record<TemplateId, TemplateDefinition> = {
     exampleSource: layeredSource.replace(/XXX系统/g, '企业数字化系统'),
     layoutHint: '左侧层级标签 + 层内独立卡片',
     aiPrompt: createAiPrompt('标准分层架构图'),
+    multiPaletteLayerIndexes: [],
   },
   matrix: {
     id: 'matrix',
@@ -129,6 +131,7 @@ export const templates: Record<TemplateId, TemplateDefinition> = {
     exampleSource: matrixSource.replace(/XXX平台/g, '智慧社区平台'),
     layoutHint: '左侧层级标签 + 业务域独立卡片',
     aiPrompt: createAiPrompt('业务域能力矩阵'),
+    multiPaletteLayerIndexes: [0],
   },
 }
 
@@ -148,6 +151,38 @@ export const themes: Record<ThemeId, ThemeDefinition> = {
       3: { background: '#eff7ff', border: '#b7d3ee', text: '#24618b' },
       4: { background: '#ffffff', border: '#d8e5ef', text: '#4e6a7f' },
     },
+    cardPalette: [
+      {
+        2: { background: '#e8f1ff', border: '#8db4ed', text: '#1f5fb9' },
+        3: { background: '#f1f6ff', border: '#bfd4f1', text: '#376d9e' },
+        4: { background: '#fbfdff', border: '#dbe7f3', text: '#5a7286' },
+      },
+      {
+        2: { background: '#fff0dd', border: '#f3ae62', text: '#bd6718' },
+        3: { background: '#fff7eb', border: '#f4cf9e', text: '#b27638' },
+        4: { background: '#fffdf9', border: '#f0dfc3', text: '#8b7458' },
+      },
+      {
+        2: { background: '#dff5f2', border: '#7ecdc7', text: '#087c78' },
+        3: { background: '#effaf8', border: '#b5e3df', text: '#257e7a' },
+        4: { background: '#fbfefd', border: '#d7eeeb', text: '#5d807d' },
+      },
+      {
+        2: { background: '#eee8ff', border: '#aa94e9', text: '#6843b2' },
+        3: { background: '#f6f2ff', border: '#d0c3f0', text: '#806ca3' },
+        4: { background: '#fdfcff', border: '#e6def5', text: '#756d82' },
+      },
+      {
+        2: { background: '#ffe6e4', border: '#efaaa7', text: '#b54b4d' },
+        3: { background: '#fff2f1', border: '#f3c9c6', text: '#a4696b' },
+        4: { background: '#fffdfd', border: '#efdede', text: '#886f71' },
+      },
+      {
+        2: { background: '#e7f5df', border: '#a5cf8f', text: '#4e812e' },
+        3: { background: '#f2faee', border: '#c7e2b5', text: '#628f49' },
+        4: { background: '#fcfefb', border: '#e1eed9', text: '#6e8567' },
+      },
+    ],
     groupPalette: ['#dff5e9', '#fff0cc', '#e5efff', '#e8e2ff', '#ffe1e1', '#dff6f3'],
     cardBackground: '#ffffff',
     cardBorder: '#bed2e5',

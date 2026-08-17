@@ -26,13 +26,19 @@ function titleStyle(theme: ThemeDefinition, size: number, bold = true): TextStyl
   return { ...baseText, fontSize: size, color: theme.ink, bold }
 }
 
-function productCardStyle(theme: ThemeDefinition, level: number): BoxStyle {
-  const preset = theme.levelCardStyles[level as 2 | 3 | 4] ?? theme.levelCardStyles[4]
+function cardPreset(theme: ThemeDefinition, level: number, paletteIndex = 0) {
+  const levelKey = level as 2 | 3 | 4
+  const palette = theme.cardPalette?.length ? theme.cardPalette[paletteIndex % theme.cardPalette.length] : undefined
+  return palette?.[levelKey] ?? theme.levelCardStyles[levelKey] ?? theme.levelCardStyles[4]
+}
+
+function productCardStyle(theme: ThemeDefinition, level: number, paletteIndex = 0): BoxStyle {
+  const preset = cardPreset(theme, level, paletteIndex)
   return boxStyle(preset.background, preset.border, level === 2 ? 10 : level === 3 ? 9 : 7, 1)
 }
 
-function productCardTextStyle(theme: ThemeDefinition, level: number): TextStyle {
-  const preset = theme.levelCardStyles[level as 2 | 3 | 4] ?? theme.levelCardStyles[4]
+function productCardTextStyle(theme: ThemeDefinition, level: number, paletteIndex = 0): TextStyle {
+  const preset = cardPreset(theme, level, paletteIndex)
   return { ...titleStyle(theme, level === 2 ? 15 : level === 3 ? 13 : 12, level < 4), color: preset.text }
 }
 
@@ -64,6 +70,7 @@ function addLeftLabelLayer(
   theme: ThemeDefinition,
   order: number,
   y: number,
+  splitPalette: boolean,
 ) {
   const layerId = makeId('layer')
   const cards: Card[] = []
@@ -78,6 +85,7 @@ function addLeftLabelLayer(
 
   root.children.forEach((domainNode, domainIndex) => {
     const columnX = contentX + domainIndex * (columnWidth + columnGap)
+    const paletteIndex = splitPalette ? order + domainIndex : order
     let currentY = contentTop
     const domainCardHeight = 46
     cards.push({
@@ -88,12 +96,13 @@ function addLeftLabelLayer(
       title: domainNode.text,
       items: [],
       order: domainIndex,
+      paletteIndex,
       x: columnX,
       y: currentY,
       width: columnWidth,
       height: domainCardHeight,
-      style: productCardStyle(theme, 2),
-      textStyle: productCardTextStyle(theme, 2),
+      style: productCardStyle(theme, 2, paletteIndex),
+      textStyle: productCardTextStyle(theme, 2, paletteIndex),
     })
     currentY += domainCardHeight + 10
 
@@ -107,12 +116,13 @@ function addLeftLabelLayer(
         title: moduleNode.text,
         items: [],
         order: moduleIndex,
+        paletteIndex,
         x: columnX,
         y: currentY,
         width: columnWidth,
         height: moduleCardHeight,
-        style: productCardStyle(theme, 3),
-        textStyle: productCardTextStyle(theme, 3),
+        style: productCardStyle(theme, 3, paletteIndex),
+        textStyle: productCardTextStyle(theme, 3, paletteIndex),
       })
       currentY += moduleCardHeight + 8
 
@@ -133,12 +143,13 @@ function addLeftLabelLayer(
           title: itemNode.text,
           items: [],
           order: itemIndex,
+          paletteIndex,
           x: columnX + column * (itemWidth + itemGap),
           y: currentY + row * (itemHeight + itemGap),
           width: itemWidth,
           height: itemHeight,
-          style: productCardStyle(theme, 4),
-          textStyle: productCardTextStyle(theme, 4),
+          style: productCardStyle(theme, 4, paletteIndex),
+          textStyle: productCardTextStyle(theme, 4, paletteIndex),
         })
       })
       currentY += Math.ceil(itemCount / itemColumns) * (itemHeight + itemGap) + 2
@@ -164,26 +175,26 @@ function addLeftLabelLayer(
   return y + layerHeight + 18
 }
 
-function layoutLeftLabelCards(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition) {
+function layoutLeftLabelCards(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition, multiPaletteLayerIndexes: number[]) {
   const maxDomainCount = Math.max(...roots.map((root) => root.children.length), 1)
   document.canvas.width = Math.max(1440, 340 + maxDomainCount * 196 + Math.max(0, maxDomainCount - 1) * 16)
   let y = 86
   roots.forEach((root, index) => {
-    y = addLeftLabelLayer(document, root, theme, index, y)
+    y = addLeftLabelLayer(document, root, theme, index, y, multiPaletteLayerIndexes.includes(index))
   })
   document.canvas.height = Math.max(1080, y + 60)
 }
 
-function layoutProduct(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition) {
-  layoutLeftLabelCards(roots, document, theme)
+function layoutProduct(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition, multiPaletteLayerIndexes: number[]) {
+  layoutLeftLabelCards(roots, document, theme, multiPaletteLayerIndexes)
 }
 
-function layoutLayered(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition) {
-  layoutLeftLabelCards(roots, document, theme)
+function layoutLayered(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition, multiPaletteLayerIndexes: number[]) {
+  layoutLeftLabelCards(roots, document, theme, multiPaletteLayerIndexes)
 }
 
-function layoutMatrix(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition) {
-  layoutLeftLabelCards(roots, document, theme)
+function layoutMatrix(roots: ParsedNode[], document: ArchitectureDocument, theme: ThemeDefinition, multiPaletteLayerIndexes: number[]) {
+  layoutLeftLabelCards(roots, document, theme, multiPaletteLayerIndexes)
 }
 
 export function buildDocument(
@@ -192,15 +203,16 @@ export function buildDocument(
   theme: ThemeDefinition,
   sourceText: string,
   title: string,
+  multiPaletteLayerIndexes: number[] = [],
 ) {
   const document = createBase(templateId, theme, sourceText, title)
-  if (templateId === 'layered') layoutLayered(roots, document, theme)
-  else if (templateId === 'matrix') layoutMatrix(roots, document, theme)
-  else layoutProduct(roots, document, theme)
+  if (templateId === 'layered') layoutLayered(roots, document, theme, multiPaletteLayerIndexes)
+  else if (templateId === 'matrix') layoutMatrix(roots, document, theme, multiPaletteLayerIndexes)
+  else layoutProduct(roots, document, theme, multiPaletteLayerIndexes)
   return document
 }
 
-export function applyTheme(document: ArchitectureDocument, theme: ThemeDefinition) {
+export function applyTheme(document: ArchitectureDocument, theme: ThemeDefinition, multiPaletteLayerIndexes: number[] = []) {
   const next: ArchitectureDocument = structuredClone(document)
   next.themeId = theme.id
   next.canvas.background = theme.canvas
@@ -214,10 +226,24 @@ export function applyTheme(document: ArchitectureDocument, theme: ThemeDefinitio
     style: { ...group.style, background: theme.groupPalette[group.order % theme.groupPalette.length], border: theme.divider },
     textStyle: { ...group.textStyle, color: theme.ink },
   }))
+
+  const paletteIndexForCard = (card: Card) => {
+    if (typeof card.paletteIndex === 'number') return card.paletteIndex
+    const layerOrder = next.layers.find((layer) => layer.id === card.parentLayerId)?.order ?? 0
+    if (!multiPaletteLayerIndexes.includes(layerOrder)) return layerOrder
+    const columns = next.cards
+      .filter((item) => item.parentLayerId === card.parentLayerId && item.level === 2)
+      .sort((left, right) => left.x - right.x)
+    if (!columns.length) return 0
+    return layerOrder + columns.reduce((nearest, current) => Math.abs(current.x - card.x) < Math.abs(nearest.x - card.x) ? current : nearest).order
+  }
+
   next.cards = next.cards.map((card) => {
-    const preset = theme.levelCardStyles[(card.level ?? 4) as 2 | 3 | 4] ?? theme.levelCardStyles[4]
+    const paletteIndex = paletteIndexForCard(card)
+    const preset = cardPreset(theme, card.level ?? 4, paletteIndex)
     return {
       ...card,
+      paletteIndex,
       style: { ...card.style, background: preset.background, border: preset.border },
       textStyle: { ...card.textStyle, color: preset.text },
     }
