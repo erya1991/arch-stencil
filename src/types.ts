@@ -71,6 +71,10 @@ export interface Card extends Rect {
   sourceId: string
   level?: number
   paletteIndex?: number
+  layoutColumn?: number
+  layoutGroupId?: string
+  layoutOrder?: number
+  layoutSlot?: number
   parentLayerId: string
   parentGroupId?: string
   title: string

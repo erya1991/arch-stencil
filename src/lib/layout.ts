@@ -81,11 +81,12 @@ function addLeftLabelLayer(
   const columnWidth = 196
   const domainCount = Math.max(1, root.children.length)
   const contentTop = y + 18
-  let maxColumnHeight = 150
+  let maxColumnHeight = 0
 
   root.children.forEach((domainNode, domainIndex) => {
     const columnX = contentX + domainIndex * (columnWidth + columnGap)
     const paletteIndex = splitPalette ? order + domainIndex : order
+    let layoutOrder = 0
     let currentY = contentTop
     const domainCardHeight = 46
     cards.push({
@@ -97,6 +98,8 @@ function addLeftLabelLayer(
       items: [],
       order: domainIndex,
       paletteIndex,
+      layoutColumn: domainIndex,
+      layoutOrder: layoutOrder++,
       x: columnX,
       y: currentY,
       width: columnWidth,
@@ -117,6 +120,8 @@ function addLeftLabelLayer(
         items: [],
         order: moduleIndex,
         paletteIndex,
+        layoutColumn: domainIndex,
+        layoutOrder: layoutOrder++,
         x: columnX,
         y: currentY,
         width: columnWidth,
@@ -144,6 +149,10 @@ function addLeftLabelLayer(
           items: [],
           order: itemIndex,
           paletteIndex,
+          layoutColumn: domainIndex,
+          layoutGroupId: moduleNode.id,
+          layoutOrder: layoutOrder++,
+          layoutSlot: itemIndex,
           x: columnX + column * (itemWidth + itemGap),
           y: currentY + row * (itemHeight + itemGap),
           width: itemWidth,
@@ -158,7 +167,8 @@ function addLeftLabelLayer(
     maxColumnHeight = Math.max(maxColumnHeight, currentY - contentTop)
   })
 
-  const layerHeight = maxColumnHeight + 18
+  // 左侧 L1 标签跟随本层卡片内容高度，避免只有一行内容时仍生成大块空白区域。
+  const layerHeight = Math.max(44, maxColumnHeight + 18)
   document.layers.push({
     id: layerId,
     sourceId: root.id,
@@ -281,7 +291,9 @@ export function resizeElement(document: ArchitectureDocument, kind: 'layer' | 'g
   const item = collection.find((entry) => entry.id === id)
   if (!item) return document
   const minWidth = kind === 'layer' ? 520 : kind === 'group' ? 180 : 130
-  const minHeight = kind === 'layer' ? 150 : kind === 'group' ? 100 : 58
+  // 左侧 L1 标签和内容卡片都允许压缩到紧凑尺寸；仍保留 28px 安全底线，
+  // 避免标题和选中边界完全不可见。业务域容器继续保留结构性高度下限。
+  const minHeight = kind === 'group' ? 100 : 28
   if (direction.includes('e')) item.width = Math.max(minWidth, item.width + dx)
   if (direction.includes('s')) item.height = Math.max(minHeight, item.height + dy)
   if (direction.includes('w')) {
@@ -298,8 +310,81 @@ export function resizeElement(document: ArchitectureDocument, kind: 'layer' | 'g
   return next
 }
 
+function inferTidyColumn(card: Card, cards: Card[]) {
+  if (typeof card.layoutColumn === 'number') return card.layoutColumn
+  const anchors = cards
+    .filter((item) => item.level === 2)
+    .sort((left, right) => left.x - right.x)
+  if (!anchors.length) return 0
+  const nearest = anchors.reduce((current, candidate) => Math.abs(candidate.x - card.x) < Math.abs(current.x - card.x) ? candidate : current)
+  return anchors.indexOf(nearest)
+}
+
+function tidyLayerCards(next: ArchitectureDocument, layer: Layer) {
+  const cards = next.cards.filter((card) => card.parentLayerId === layer.id && !card.parentGroupId)
+  if (!cards.length) return
+
+  const columns = new Map<number, Card[]>()
+  cards.forEach((card) => {
+    const column = inferTidyColumn(card, cards)
+    const columnCards = columns.get(column) ?? []
+    columnCards.push(card)
+    columns.set(column, columnCards)
+  })
+
+  const orderedColumns = [...columns.entries()].sort(([left], [right]) => left - right)
+  const minCardX = Math.min(...cards.map((card) => card.x))
+  const startX = Math.max(layer.x + 180, minCardX)
+  const fullWidthCards = cards.filter((card) => card.level !== 4)
+  const columnWidth = Math.max(196, ...fullWidthCards.map((card) => card.width), 130)
+  const columnGap = 16
+  const contentTop = layer.y + 18
+  orderedColumns.forEach(([, columnCards], columnPosition) => {
+    const columnX = startX + columnPosition * (columnWidth + columnGap)
+    const sortedCards = columnCards.sort((left, right) => {
+      if (typeof left.layoutOrder === 'number' && typeof right.layoutOrder === 'number' && left.layoutOrder !== right.layoutOrder) return left.layoutOrder - right.layoutOrder
+      if (left.y !== right.y) return left.y - right.y
+      if (left.level !== right.level) return (left.level ?? 4) - (right.level ?? 4)
+      return left.x - right.x
+    })
+    let cursorY = contentTop
+    let index = 0
+
+    while (index < sortedCards.length) {
+      const card = sortedCards[index]
+      if (card.level === 4 && card.layoutGroupId) {
+        const groupCards: Card[] = []
+        while (index < sortedCards.length && sortedCards[index].level === 4 && sortedCards[index].layoutGroupId === card.layoutGroupId) {
+          groupCards.push(sortedCards[index])
+          index += 1
+        }
+        groupCards.sort((left, right) => (left.layoutSlot ?? 0) - (right.layoutSlot ?? 0))
+        const itemGap = 8
+        const itemColumns = Math.min(2, groupCards.length)
+        const itemWidth = (columnWidth - itemGap * (itemColumns - 1)) / itemColumns
+        const rowHeight = Math.max(...groupCards.map((item) => item.height))
+        groupCards.forEach((item, itemIndex) => {
+          const row = Math.floor(itemIndex / itemColumns)
+          const column = itemIndex % itemColumns
+          item.x = columnX + column * (itemWidth + itemGap)
+          item.y = cursorY + row * (rowHeight + itemGap)
+          if (item.width > itemWidth) item.width = itemWidth
+        })
+        cursorY += Math.ceil(groupCards.length / itemColumns) * (rowHeight + itemGap) + 2
+        continue
+      }
+
+      card.x = columnX
+      card.y = cursorY
+      cursorY += card.height + 8
+      index += 1
+    }
+  })
+}
+
 export function tidyDocument(document: ArchitectureDocument) {
   const next = structuredClone(document)
+  const layerGeometry = new Map(next.layers.map((layer) => [layer.id, { x: layer.x, y: layer.y, width: layer.width, height: layer.height }]))
   next.groups.forEach((group) => {
     const cards = next.cards.filter((card) => card.parentGroupId === group.id).sort((a, b) => a.order - b.order)
     if (!cards.length) return
@@ -311,6 +396,15 @@ export function tidyDocument(document: ArchitectureDocument) {
       card.width = cardWidth
     })
   })
+  next.layers.forEach((layer) => tidyLayerCards(next, layer))
+  // 左侧 L1 层级标签通常由用户手动调整，整理对齐只作用于右侧内容卡片。
+  // 即使后续整理逻辑扩展，也不能改变左侧区域的位置和尺寸。
+  next.layers.forEach((layer) => {
+    const geometry = layerGeometry.get(layer.id)
+    if (geometry) Object.assign(layer, geometry)
+  })
+  const maxLayerBottom = Math.max(...next.layers.map((layer) => layer.y + layer.height), 0)
+  next.canvas.height = Math.max(next.canvas.height, maxLayerBottom + 60)
   next.updatedAt = new Date().toISOString()
   return next
 }

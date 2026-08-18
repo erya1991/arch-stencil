@@ -32,13 +32,19 @@ type ElementRecord = Layer | ArchitectureGroup | Card
 type EditingState = { kind: ElementKind; id: string } | null
 type DragState = {
   type: 'move' | 'resize'
-  kind: ElementKind
-  id: string
+  selections: Selection[]
   direction?: string
   pointerX: number
   pointerY: number
   base: ArchitectureDocument
   current: ArchitectureDocument
+}
+type MarqueeState = {
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+  append: boolean
 }
 
 const DRAFT_STORAGE_KEY = 'arch-stencil:active-draft'
@@ -144,12 +150,12 @@ function colorPickerValue(value: string) {
   return '#ffffff'
 }
 
-function ColorCodeField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ColorCodeField({ label, value, onChange, placeholder = '#RRGGBB / rgb(...)' }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return <div className="color-code-field">
     <label className="field-label">{label}</label>
     <div className="color-code-control">
       <input className="color-input" type="color" value={colorPickerValue(value)} onChange={(event) => onChange(event.target.value)} aria-label={`${label}颜色选择器`} />
-      <input className="color-code-input" type="text" value={value} onChange={(event) => onChange(event.target.value)} placeholder="#RRGGBB / rgb(...)" aria-label={`${label}颜色代码`} />
+      <input className="color-code-input" type="text" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} aria-label={`${label}颜色代码`} />
     </div>
   </div>
 }
@@ -175,6 +181,40 @@ function updateTextStyleInDocument(documentData: ArchitectureDocument, selection
   return updateElementInDocument(documentData, selection, { textStyle: { ...element.textStyle, ...patch } })
 }
 
+function updateElementsInDocument(documentData: ArchitectureDocument, selections: Selection[], patch: Record<string, unknown>) {
+  const next = structuredClone(documentData)
+  const selectionIds = {
+    layers: new Set(selections.filter((selection) => selection.kind === 'layer').map((selection) => selection.id)),
+    groups: new Set(selections.filter((selection) => selection.kind === 'group').map((selection) => selection.id)),
+    cards: new Set(selections.filter((selection) => selection.kind === 'card').map((selection) => selection.id)),
+  }
+  next.layers = next.layers.map((item) => selectionIds.layers.has(item.id) ? { ...item, ...patch } as Layer : item)
+  next.groups = next.groups.map((item) => selectionIds.groups.has(item.id) ? { ...item, ...patch } as ArchitectureGroup : item)
+  next.cards = next.cards.map((item) => selectionIds.cards.has(item.id) ? { ...item, ...patch } as Card : item)
+  next.updatedAt = new Date().toISOString()
+  return next
+}
+
+function updateStylesInDocument(documentData: ArchitectureDocument, selections: Selection[], patch: Partial<BoxStyle>) {
+  const next = structuredClone(documentData)
+  const selectionIds = new Set(selections.map((selection) => `${selection.kind}:${selection.id}`))
+  next.layers = next.layers.map((item) => selectionIds.has(`layer:${item.id}`) ? { ...item, style: { ...item.style, ...patch } } : item)
+  next.groups = next.groups.map((item) => selectionIds.has(`group:${item.id}`) ? { ...item, style: { ...item.style, ...patch } } : item)
+  next.cards = next.cards.map((item) => selectionIds.has(`card:${item.id}`) ? { ...item, style: { ...item.style, ...patch } } : item)
+  next.updatedAt = new Date().toISOString()
+  return next
+}
+
+function updateTextStylesInDocument(documentData: ArchitectureDocument, selections: Selection[], patch: Partial<TextStyle>) {
+  const next = structuredClone(documentData)
+  const selectionIds = new Set(selections.map((selection) => `${selection.kind}:${selection.id}`))
+  next.layers = next.layers.map((item) => selectionIds.has(`layer:${item.id}`) ? { ...item, textStyle: { ...item.textStyle, ...patch } } : item)
+  next.groups = next.groups.map((item) => selectionIds.has(`group:${item.id}`) ? { ...item, textStyle: { ...item.textStyle, ...patch } } : item)
+  next.cards = next.cards.map((item) => selectionIds.has(`card:${item.id}`) ? { ...item, textStyle: { ...item.textStyle, ...patch } } : item)
+  next.updatedAt = new Date().toISOString()
+  return next
+}
+
 function deleteSelectionFromDocument(documentData: ArchitectureDocument, selection: Selection) {
   const next = structuredClone(documentData)
   if (selection.kind === 'layer') {
@@ -192,12 +232,40 @@ function deleteSelectionFromDocument(documentData: ArchitectureDocument, selecti
   return next
 }
 
+function deleteSelectionsFromDocument(documentData: ArchitectureDocument, selections: Selection[]) {
+  const next = selections.reduce((current, selection) => deleteSelectionFromDocument(current, selection), documentData)
+  return { ...next, updatedAt: new Date().toISOString() }
+}
+
+function moveSelections(documentData: ArchitectureDocument, selections: Selection[], dx: number, dy: number) {
+  if (selections.length === 1) return moveElement(documentData, selections[0].kind, selections[0].id, dx, dy)
+  const next = structuredClone(documentData)
+  selections.filter((selection) => selection.kind === 'card').forEach((selection) => {
+    const card = next.cards.find((item) => item.id === selection.id)
+    if (card) {
+      card.x += dx
+      card.y += dy
+    }
+  })
+  next.updatedAt = new Date().toISOString()
+  return next
+}
+
+function sameSelection(left: Selection, right: Selection) {
+  return left.kind === right.kind && left.id === right.id
+}
+
+function commonValue<T>(values: T[]) {
+  if (!values.length || !values.every((value) => value === values[0])) return undefined
+  return values[0]
+}
+
 function App() {
   const initialDocument = useMemo(() => createDocument('product', 'colorful'), [])
   const [documentData, setDocumentData] = useState<ArchitectureDocument>(initialDocument)
   const [sourceText, setSourceText] = useState(initialDocument.sourceText)
   const [activeTemplateId, setActiveTemplateId] = useState<TemplateId>('product')
-  const [selected, setSelected] = useState<Selection | null>(null)
+  const [selected, setSelected] = useState<Selection[]>([])
   const [editing, setEditing] = useState<EditingState>(null)
   const [editingValue, setEditingValue] = useState('')
   const [parseResult, setParseResult] = useState<ParseResult | null>(null)
@@ -213,12 +281,20 @@ function App() {
   const spaceDownRef = useRef(false)
   const panRef = useRef<{ pointerX: number; pointerY: number; panX: number; panY: number } | null>(null)
   const dragRef = useRef<DragState | null>(null)
+  const marqueeRef = useRef<MarqueeState | null>(null)
+  const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const historyRef = useRef({ entries: [initialDocument], index: 0 })
   const initialStateRef = useRef({ documentData: initialDocument, sourceText: initialDocument.sourceText, activeTemplateId: 'product' as TemplateId })
 
   const theme = themes[documentData.themeId]
   const template = templates[activeTemplateId]
-  const selectedElement = getElement(documentData, selected)
+  const primarySelection = selected[0] ?? null
+  const selectedElement = getElement(documentData, primarySelection)
+  const selectedCards = selected
+    .filter((selection) => selection.kind === 'card')
+    .map((selection) => documentData.cards.find((card) => card.id === selection.id))
+    .filter((card): card is Card => Boolean(card))
+  const isMultiCardSelection = selectedCards.length > 1 && selectedCards.length === selected.length
   const canUndo = historyRef.current.index > 0
   const canRedo = historyRef.current.index < historyRef.current.entries.length - 1
 
@@ -257,7 +333,7 @@ function App() {
     if (history.index === 0) return
     history.index -= 1
     setDocumentData(history.entries[history.index])
-    setSelected(null)
+    setSelected([])
     setHistoryTick((value) => value + 1)
   }, [])
 
@@ -266,7 +342,7 @@ function App() {
     if (history.index >= history.entries.length - 1) return
     history.index += 1
     setDocumentData(history.entries[history.index])
-    setSelected(null)
+    setSelected([])
     setHistoryTick((value) => value + 1)
   }, [])
 
@@ -280,7 +356,7 @@ function App() {
     }
     const next = buildDocument(parsed.roots, activeTemplateId, themes[documentData.themeId], sourceText, parsed.title, template.multiPaletteLayerIndexes)
     commit(next)
-    setSelected(null)
+    setSelected([])
     notify(message)
   }, [activeTemplateId, commit, documentData.themeId, notify, sourceText])
 
@@ -288,7 +364,7 @@ function App() {
     setActiveTemplateId(id)
     setSourceText(templates[id].sourceTemplate)
     setParseResult(null)
-    setSelected(null)
+    setSelected([])
   }
 
   const copyTemplate = async () => {
@@ -318,7 +394,7 @@ function App() {
     const next = createDocument(activeTemplateId, documentData.themeId)
     commit(next)
     setSourceText(next.sourceText)
-    setSelected(null)
+    setSelected([])
     notify('已新建架构图')
   }
 
@@ -334,7 +410,7 @@ function App() {
     setDraftSavedAt(draftPrompt.savedAt)
     setDraftPrompt(null)
     setParseResult(null)
-    setSelected(null)
+    setSelected([])
     notify('已恢复上次未完成草稿')
   }
 
@@ -360,7 +436,7 @@ function App() {
       commit(parsed)
       setActiveTemplateId(parsed.templateId)
       setSourceText(parsed.sourceText ?? '')
-      setSelected(null)
+      setSelected([])
       setDraftPrompt(null)
       setDraftSavedAt('')
       notify('JSON 源文件已打开')
@@ -385,28 +461,28 @@ function App() {
 
   const tidy = () => {
     commit(tidyDocument(documentData))
-    notify('已完成整理对齐')
+    notify('已整理并修复卡片重叠')
   }
 
   const updateSelected = (patch: Record<string, unknown>) => {
-    if (!selected) return
-    commit(updateElementInDocument(documentData, selected, patch))
+    if (selected.length !== 1) return
+    commit(updateElementInDocument(documentData, selected[0], patch))
   }
 
   const updateSelectedStyle = (patch: Partial<BoxStyle>) => {
-    if (!selected) return
-    commit(updateStyleInDocument(documentData, selected, patch))
+    if (!selected.length) return
+    commit(selected.length === 1 ? updateStyleInDocument(documentData, selected[0], patch) : updateStylesInDocument(documentData, selected, patch))
   }
 
   const updateSelectedTextStyle = (patch: Partial<TextStyle>) => {
-    if (!selected) return
-    commit(updateTextStyleInDocument(documentData, selected, patch))
+    if (!selected.length) return
+    commit(selected.length === 1 ? updateTextStyleInDocument(documentData, selected[0], patch) : updateTextStylesInDocument(documentData, selected, patch))
   }
 
   const startEditing = (kind: ElementKind, id: string) => {
     const element = getElement(documentData, { kind, id })
     if (!element) return
-    setSelected({ kind, id })
+    setSelected([{ kind, id }])
     setEditing({ kind, id })
     setEditingValue(elementName(element))
   }
@@ -422,19 +498,53 @@ function App() {
   const startMove = (event: ReactPointerEvent, kind: ElementKind, id: string) => {
     if (event.button !== 0 || spaceDownRef.current) return
     event.stopPropagation()
-    setSelected({ kind, id })
-    dragRef.current = { type: 'move', kind, id, pointerX: event.clientX, pointerY: event.clientY, base: documentData, current: documentData }
+    const selection = { kind, id }
+    const isModifierSelection = kind === 'card' && (event.ctrlKey || event.metaKey)
+    if (isModifierSelection) {
+      if (selected.some((item) => item.kind !== 'card')) {
+        setSelected([selection])
+        return
+      }
+      const exists = selected.some((item) => sameSelection(item, selection))
+      if (exists) {
+        setSelected(selected.filter((item) => !sameSelection(item, selection)))
+        return
+      }
+      const anchor = selected[0]
+      const anchorCard = anchor?.kind === 'card' ? documentData.cards.find((card) => card.id === anchor.id) : null
+      const card = documentData.cards.find((item) => item.id === id)
+      if (anchorCard && card && (anchorCard.parentLayerId !== card.parentLayerId || anchorCard.level !== card.level)) {
+        notify('只能选择同一层级区域、同一层级的卡片')
+        return
+      }
+      setSelected([...selected, selection])
+      return
+    }
+    const nextSelections = selected.some((item) => sameSelection(item, selection)) ? selected : [selection]
+    setSelected(nextSelections)
+    dragRef.current = { type: 'move', selections: nextSelections, pointerX: event.clientX, pointerY: event.clientY, base: documentData, current: documentData }
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
   const startResize = (event: ReactPointerEvent, kind: ElementKind, id: string, direction: string) => {
     event.stopPropagation()
-    setSelected({ kind, id })
-    dragRef.current = { type: 'resize', kind, id, direction, pointerX: event.clientX, pointerY: event.clientY, base: documentData, current: documentData }
+    const selection = { kind, id }
+    setSelected([selection])
+    dragRef.current = { type: 'resize', selections: [selection], direction, pointerX: event.clientX, pointerY: event.clientY, base: documentData, current: documentData }
     ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
   }
 
   const handleCanvasPointerMove = (event: ReactPointerEvent) => {
+    const marqueeStart = marqueeRef.current
+    if (marqueeStart) {
+      const viewport = viewportRef.current
+      if (!viewport) return
+      const rect = viewport.getBoundingClientRect()
+      const next = { ...marqueeStart, currentX: event.clientX - rect.left, currentY: event.clientY - rect.top }
+      marqueeRef.current = next
+      setMarquee(next)
+      return
+    }
     const drag = dragRef.current
     if (!drag) {
       const panStart = panRef.current
@@ -444,8 +554,8 @@ function App() {
     const dx = (event.clientX - drag.pointerX) / zoom
     const dy = (event.clientY - drag.pointerY) / zoom
     const next = drag.type === 'move'
-      ? moveElement(drag.base, drag.kind, drag.id, dx, dy)
-      : resizeElement(drag.base, drag.kind, drag.id, drag.direction ?? 'se', dx, dy)
+      ? moveSelections(drag.base, drag.selections, dx, dy)
+      : resizeElement(drag.base, drag.selections[0].kind, drag.selections[0].id, drag.direction ?? 'se', dx, dy)
     drag.current = next
     setDocumentData(next)
   }
@@ -454,6 +564,37 @@ function App() {
     if (dragRef.current) {
       commit(dragRef.current.current)
       dragRef.current = null
+    }
+    const marqueeStart = marqueeRef.current
+    if (marqueeStart) {
+      const viewport = viewportRef.current
+      marqueeRef.current = null
+      setMarquee(null)
+      if (viewport) {
+        const left = Math.min(marqueeStart.startX, marqueeStart.currentX)
+        const right = Math.max(marqueeStart.startX, marqueeStart.currentX)
+        const top = Math.min(marqueeStart.startY, marqueeStart.currentY)
+        const bottom = Math.max(marqueeStart.startY, marqueeStart.currentY)
+        if (right - left > 5 && bottom - top > 5) {
+          const candidates = documentData.cards.filter((card) => {
+            const cardLeft = pan.x + card.x * zoom
+            const cardTop = pan.y + card.y * zoom
+            const cardRight = cardLeft + card.width * zoom
+            const cardBottom = cardTop + card.height * zoom
+            return cardLeft < right && cardRight > left && cardTop < bottom && cardBottom > top
+          })
+          const first = candidates[0]
+          const compatible = first ? candidates.filter((card) => card.parentLayerId === first.parentLayerId && card.level === first.level) : []
+          const marqueeSelections = compatible.map((card) => ({ kind: 'card' as const, id: card.id }))
+          const canAppend = marqueeStart.append && selected.length > 0 && selected.every((selection) => selection.kind === 'card')
+          const nextSelections = canAppend
+            ? [...selected, ...marqueeSelections.filter((candidate) => !selected.some((item) => sameSelection(item, candidate)))]
+            : marqueeSelections
+          setSelected(nextSelections)
+        } else if (!marqueeStart.append) {
+          setSelected([])
+        }
+      }
     }
     panRef.current = null
   }
@@ -464,7 +605,17 @@ function App() {
       event.preventDefault()
       return
     }
-    setSelected(null)
+    if (event.button !== 0) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const rect = viewport.getBoundingClientRect()
+    const pointX = event.clientX - rect.left
+    const pointY = event.clientY - rect.top
+    const next = { startX: pointX, startY: pointY, currentX: pointX, currentY: pointY, append: event.ctrlKey || event.metaKey }
+    marqueeRef.current = next
+    setMarquee(next)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    event.preventDefault()
   }
 
   const fitCanvas = () => {
@@ -477,10 +628,10 @@ function App() {
   }
 
   const removeSelected = useCallback(() => {
-    if (!selected) return
-    commit(deleteSelectionFromDocument(documentData, selected))
-    setSelected(null)
-    notify('已删除选中元素')
+    if (!selected.length) return
+    commit(selected.length === 1 ? deleteSelectionFromDocument(documentData, selected[0]) : deleteSelectionsFromDocument(documentData, selected))
+    setSelected([])
+    notify(selected.length > 1 ? `已删除 ${selected.length} 个选中元素` : '已删除选中元素')
   }, [commit, documentData, notify, selected])
 
   useEffect(() => {
@@ -532,7 +683,7 @@ function App() {
   })
 
   const renderResizeHandles = (kind: ElementKind, id: string) => {
-    if (!selected || selected.kind !== kind || selected.id !== id) return null
+    if (selected.length !== 1 || selected[0].kind !== kind || selected[0].id !== id) return null
     return <>
       {['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'].map((direction) => <span key={direction} className={`resize-handle handle-${direction}`} onPointerDown={(event) => startResize(event, kind, id, direction)} />)}
     </>
@@ -556,7 +707,7 @@ function App() {
   const renderCard = (card: Card, parent: Layer | ArchitectureGroup) => {
     const localX = card.x - parent.x
     const localY = card.y - parent.y
-    const isSelected = selected?.kind === 'card' && selected.id === card.id
+    const isSelected = selected.some((selection) => selection.kind === 'card' && selection.id === card.id)
     return <div
       key={card.id}
       className={`canvas-element canvas-card card-level-${card.level ?? 3} ${isSelected ? 'is-selected' : ''}`}
@@ -573,7 +724,7 @@ function App() {
   const renderGroup = (group: ArchitectureGroup, layer: Layer) => {
     const localX = group.x - layer.x
     const localY = group.y - layer.y
-    const isSelected = selected?.kind === 'group' && selected.id === group.id
+    const isSelected = selected.length === 1 && selected[0].kind === 'group' && selected[0].id === group.id
     return <div
       key={group.id}
       className={`canvas-element canvas-group ${isSelected ? 'is-selected' : ''}`}
@@ -589,7 +740,7 @@ function App() {
   }
 
   const renderLayer = (layer: Layer) => {
-    const isSelected = selected?.kind === 'layer' && selected.id === layer.id
+    const isSelected = selected.length === 1 && selected[0].kind === 'layer' && selected[0].id === layer.id
     const leftLabelLayer = ['product', 'layered', 'matrix'].includes(documentData.templateId)
     return <div
       key={layer.id}
@@ -605,7 +756,15 @@ function App() {
     </div>
   }
 
-  const selectedKind = selectedElement ? elementLabel(selected?.kind ?? 'card') : '未选择元素'
+  const selectedKind = selectedElement ? elementLabel(primarySelection?.kind ?? 'card') : isMultiCardSelection ? '多选卡片' : '未选择元素'
+  const commonFontFamily = commonValue(selectedCards.map((card) => card.textStyle.fontFamily))
+  const commonFontSize = commonValue(selectedCards.map((card) => card.textStyle.fontSize))
+  const commonTextColor = commonValue(selectedCards.map((card) => card.textStyle.color))
+  const commonBackground = commonValue(selectedCards.map((card) => card.style.background))
+  const commonBorder = commonValue(selectedCards.map((card) => card.style.border))
+  const commonBorderWidth = commonValue(selectedCards.map((card) => card.style.borderWidth))
+  const commonRadius = commonValue(selectedCards.map((card) => card.style.radius))
+  const allSelectedCardsBold = selectedCards.length > 0 && selectedCards.every((card) => card.textStyle.bold)
   void historyTick
 
   return <div className="app-shell" style={{ '--accent': theme.editorAccent } as CSSProperties}>
@@ -713,6 +872,7 @@ function App() {
             <div className="canvas-heading">{documentData.title}</div>
             {documentData.layers.map(renderLayer)}
           </div>
+          {marquee && <div className="selection-marquee" style={{ left: Math.min(marquee.startX, marquee.currentX), top: Math.min(marquee.startY, marquee.currentY), width: Math.abs(marquee.currentX - marquee.startX), height: Math.abs(marquee.currentY - marquee.startY) }} />}
         </div>
         <div className="canvas-statusbar">
           <span>画布 {documentData.canvas.width} × {documentData.canvas.height}</span>
@@ -722,10 +882,24 @@ function App() {
       </section>
 
       <aside className="right-panel panel">
-        <div className="panel-heading"><div><span className="eyebrow">INSPECTOR</span><h2>{selectedElement ? selectedKind : '画布设置'}</h2></div>{selectedElement && <button className="text-button danger" onClick={removeSelected}>删除</button>}</div>
-        {selectedElement && selected ? <div className="inspector-content">
+        <div className="panel-heading"><div><span className="eyebrow">INSPECTOR</span><h2>{selected.length ? selectedKind : '画布设置'}</h2></div>{selected.length > 0 && <button className="text-button danger" onClick={removeSelected}>{selected.length > 1 ? `删除 ${selected.length} 个` : '删除'}</button>}</div>
+        {isMultiCardSelection ? <div className="inspector-content">
+          <div className="multi-selection-note"><strong>已选择 {selectedCards.length} 个同层级卡片</strong><p>下面的文字和卡片样式会同时应用到全部选中项。</p></div>
+          <div className="inspector-section"><div className="section-title">批量文字设置</div>
+            <label className="field-label">字体</label>
+            <select className="field-input" value={commonFontFamily ?? ''} onChange={(event) => updateSelectedTextStyle({ fontFamily: event.target.value })}>
+              <option value="" disabled>多种字体</option><option>Microsoft YaHei, Arial, sans-serif</option><option>SimHei, sans-serif</option><option>SimSun, serif</option><option>Arial, sans-serif</option>
+            </select>
+            <div className="field-row"><div><label className="field-label">字号</label><input className="field-input" type="number" min="10" max="48" value={commonFontSize ?? ''} placeholder="多种字号" onChange={(event) => { if (event.target.value) updateSelectedTextStyle({ fontSize: clamp(Number(event.target.value), 10, 48) }) }} /></div><ColorCodeField label="文字色" value={commonTextColor ?? ''} placeholder="多种颜色，输入后统一设置" onChange={(value) => updateSelectedTextStyle({ color: value })} /></div>
+            <button className={`toggle-button ${allSelectedCardsBold ? 'active' : ''}`} onClick={() => updateSelectedTextStyle({ bold: !allSelectedCardsBold })}><strong>B</strong> {allSelectedCardsBold ? '取消加粗' : '加粗'}</button>
+          </div>
+          <div className="inspector-section"><div className="section-title">批量卡片设置</div>
+            <div className="field-row"><ColorCodeField label="背景色" value={commonBackground ?? ''} placeholder="多种颜色，输入后统一设置" onChange={(value) => updateSelectedStyle({ background: value })} /><ColorCodeField label="边框色" value={commonBorder ?? ''} placeholder="多种颜色，输入后统一设置" onChange={(value) => updateSelectedStyle({ border: value })} /></div>
+            <div className="field-row"><div><label className="field-label">边框粗细</label><select className="field-input" value={commonBorderWidth ?? ''} onChange={(event) => updateSelectedStyle({ borderWidth: Number(event.target.value) })}><option value="" disabled>多种粗细</option><option value="0">0 px</option><option value="1">1 px</option><option value="2">2 px</option><option value="3">3 px</option><option value="4">4 px</option></select></div><div><label className="field-label">圆角</label><select className="field-input" value={commonRadius ?? ''} onChange={(event) => updateSelectedStyle({ radius: Number(event.target.value) })}><option value="" disabled>多种圆角</option><option value="0">0 px</option><option value="4">4 px</option><option value="8">8 px</option><option value="12">12 px</option><option value="16">16 px</option><option value="20">20 px</option></select></div></div>
+          </div>
+        </div> : selectedElement && primarySelection ? <div className="inspector-content">
           <label className="field-label">名称</label>
-          <input className="field-input" value={elementName(selectedElement)} onChange={(event) => updateSelected(selected.kind === 'card' ? { title: event.target.value } : { name: event.target.value })} />
+          <input className="field-input" value={elementName(selectedElement)} onChange={(event) => updateSelected(primarySelection.kind === 'card' ? { title: event.target.value } : { name: event.target.value })} />
           <div className="inspector-section"><div className="section-title">文字设置</div>
             <label className="field-label">字体</label>
             <select className="field-input" value={selectedElement.textStyle.fontFamily} onChange={(event) => updateSelectedTextStyle({ fontFamily: event.target.value })}>
